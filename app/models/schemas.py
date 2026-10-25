@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -18,6 +18,8 @@ class DownstreamAgent(str, Enum):
     CARD_SECURITY_AGENT = "card_security_agent"
     ADVISORY_SUPPORT_AGENT = "advisory_support_agent"
     REQUEST_HANDLER_AGENT = "request_handler_agent"
+    ANALYZER_AGENT = "analyzer_agent"
+    CONTENT_GENERATOR_AGENT = "content_generator_agent"
 
 
 class UrgencyLevel(str, Enum):
@@ -37,6 +39,43 @@ class BankingEntities(BaseModel):
     date_or_period: Optional[str] = Field(None, description="Timeframe or date range, e.g. 'last month', 'today'")
     transaction_id: Optional[str] = Field(None, description="Reference code or transaction identifier")
     urgency: UrgencyLevel = Field(UrgencyLevel.NORMAL, description="Urgency classification")
+
+
+class RetrievedChunk(BaseModel):
+    """A document or text chunk retrieved from Azure AI Search or knowledge base."""
+    id: str = Field(..., description="Unique chunk or document ID")
+    content: str = Field(..., description="Text content of chunk")
+    title: Optional[str] = Field(None, description="Document title or section name")
+    source: Optional[str] = Field(None, description="Source file or document reference")
+    category: Optional[str] = Field(None, description="Domain category")
+    chunk_index: Optional[int] = Field(None, description="Index of the chunk in the source document")
+    retrieval_score: float = Field(0.0, description="Initial retrieval score from Azure AI Search")
+    rerank_score: Optional[float] = Field(None, description="Score computed by Cross-Encoder Reranker")
+    rank: Optional[int] = Field(None, description="Rank position after reranking (1 = most relevant)")
+
+
+class AnalyzerOutput(BaseModel):
+    """
+    Structured output produced by Agent 2 (Analyzer Agent).
+    Encapsulates retrieved and cross-encoder reranked chunks.
+    """
+    query: str = Field(..., description="Input query used for RAG")
+    enriched_query: Optional[str] = Field(None, description="Enriched query from Agent 1")
+    retrieved_count: int = Field(0, description="Total candidate chunks fetched from Azure AI Search")
+    reranked_chunks: List[RetrievedChunk] = Field(default_factory=list, description="Top reranked chunks")
+    search_provider: str = Field("Azure AI Search", description="Search service provider")
+    reranker_provider: str = Field("CrossEncoder", description="Reranking model provider")
+    summary: Optional[str] = Field(None, description="Brief summary of retrieved context")
+
+
+class ContentGeneratorOutput(BaseModel):
+    """
+    Structured output produced by Agent 3 (Content Generation Agent).
+    Answers the user query grounded in the reranked chunks.
+    """
+    answer: str = Field(..., description="The complete, conversational, grounded banking answer")
+    grounded_sources: List[str] = Field(default_factory=list, description="List of source document titles used")
+    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Answer confidence")
 
 
 class RequestHandlerOutput(BaseModel):
@@ -74,13 +113,25 @@ class RequestHandlerOutput(BaseModel):
         default_factory=list,
         description="Information needed to fulfill the action that was not provided in the prompt"
     )
-    recommended_agent: Optional[DownstreamAgent] = Field(
+    recommended_agent: Optional[Union[DownstreamAgent, str]] = Field(
         None,
-        description="Which of the 4 agents in the planned banking architecture should process next"
+        description="Which agent in the banking architecture processed or should process next"
     )
     response_message: str = Field(
         ...,
         description="Conversational customer-facing response message (refusal or acknowledgment)"
+    )
+    retrieved_documents: List[str] = Field(
+        default_factory=list,
+        description="Candidate document titles from retrieval"
+    )
+    reranked_documents: List[str] = Field(
+        default_factory=list,
+        description="Top document titles selected by cross-encoder reranker"
+    )
+    reranked_chunks: List[RetrievedChunk] = Field(
+        default_factory=list,
+        description="Detailed chunk objects passed to content generation"
     )
 
 
@@ -100,6 +151,10 @@ class ChatResponse(BaseModel):
     data: RequestHandlerOutput = Field(..., description="Processed agent output")
     processing_time_ms: float = Field(..., description="Execution duration in milliseconds")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="UTC timestamp of response")
+    pipeline: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Multi-agent pipeline diagnostic steps (Agent 1 -> Agent 2 -> Agent 3)"
+    )
 
 
 class HealthResponse(BaseModel):
