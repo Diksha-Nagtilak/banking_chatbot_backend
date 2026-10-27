@@ -63,17 +63,18 @@ def search_azure_ai_search(
     """
     limit = top_k or settings.AZURE_SEARCH_TOP_K or 5
 
-    # Strictly check that Azure AI Search endpoint and index name are configured
+    # Gracefully check that Azure AI Search endpoint and index name are configured
     if not (settings.AZURE_SEARCH_ENDPOINT and settings.AZURE_SEARCH_INDEX_NAME):
-        err_msg = (
-            "Azure AI Search index is not configured!\n"
-            "Please provide your Azure AI Search credentials in '.env':\n"
-            "  AZURE_SEARCH_ENDPOINT=https://<your-service-name>.search.windows.net\n"
-            "  AZURE_SEARCH_API_KEY=<your-azure-search-key>\n"
-            "  AZURE_SEARCH_INDEX_NAME=<your-index-name>"
+        logger.warning(
+            "Azure AI Search endpoint or index name not configured. Continuing without index retrieval."
         )
-        logger.error(err_msg)
-        raise RuntimeError(err_msg)
+        return [], "Azure AI Search (Unconfigured)"
+
+    if not (settings.AZURE_SEARCH_API_KEY or settings.AZURE_SEARCH_USE_MANAGED_IDENTITY):
+        logger.warning(
+            "Neither AZURE_SEARCH_API_KEY nor AZURE_SEARCH_USE_MANAGED_IDENTITY is provided. Continuing without index retrieval."
+        )
+        return [], "Azure AI Search (Awaiting API Key)"
 
     try:
         from azure.core.credentials import AzureKeyCredential
@@ -88,7 +89,7 @@ def search_azure_ai_search(
         elif settings.AZURE_SEARCH_API_KEY:
             credential = AzureKeyCredential(settings.AZURE_SEARCH_API_KEY.strip())
         else:
-            raise ValueError("Neither AZURE_SEARCH_API_KEY nor AZURE_SEARCH_USE_MANAGED_IDENTITY is provided in .env.")
+            return [], "Azure AI Search (No credentials)"
 
         logger.info(f"[FLOW: STEP 6A - AZURE AI SEARCH CLIENT] Connecting to '{endpoint}', index: '{index_name}'...")
         client = SearchClient(endpoint=endpoint, index_name=index_name, credential=credential)
@@ -133,5 +134,5 @@ def search_azure_ai_search(
         return chunks, f"Azure AI Search (Index: {index_name})"
 
     except Exception as e:
-        logger.exception(f"Error querying Azure AI Search index: {e}")
-        raise RuntimeError(f"Failed to query Azure AI Search index: {e}") from e
+        logger.warning(f"Error querying Azure AI Search index: {e}. Gracefully continuing without search chunks.")
+        return [], f"Azure AI Search (Query Error: {type(e).__name__})"

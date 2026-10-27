@@ -253,28 +253,46 @@ async def chat_endpoint(request: ChatRequest) -> ChatResponse:
     logger.info(f"   [1.9] Variable 'session_id' determined: '{session_id}'")
     logger.info("   [1.10] Calling run_banking_workflow() to trigger Microsoft Agent Framework execution...")
 
-    workflow_result = await run_banking_workflow(
-        workflow=banking_workflow,
-        message=request.message,
-        session_id=session_id,
-        context=request.context,
-    )
+    try:
+        workflow_result = await run_banking_workflow(
+            workflow=banking_workflow,
+            message=request.message,
+            session_id=session_id,
+            context=request.context,
+        )
 
-    logger.info("[FLOW: STEP 9 - FASTAPI GATEWAY RETURN] Workflow execution finished.....")
-    logger.info(f"   [9.1] Workflow Result 'status'             : '{workflow_result.status}'")
-    logger.info(f"   [9.2] Workflow Result 'processing_time_ms': {workflow_result.processing_time_ms} ms")
-    snippet = workflow_result.data.response_message.replace(chr(10), " ")[:120] if workflow_result.data and workflow_result.data.response_message else "No message"
-    logger.info(f"   [9.3] Response message snippet            : '{snippet}...'")
-    logger.info(f"   [9.4] Packaging into ChatResponse and returning HTTP 200 JSON to frontend.")
-    logger.info("=" * 80)
+        logger.info("[FLOW: STEP 9 - FASTAPI GATEWAY RETURN] Workflow execution finished.....")
+        logger.info(f"   [9.1] Workflow Result 'status'             : '{workflow_result.status}'")
+        logger.info(f"   [9.2] Workflow Result 'processing_time_ms': {workflow_result.processing_time_ms} ms")
+        snippet = workflow_result.data.response_message.replace(chr(10), " ")[:120] if workflow_result.data and workflow_result.data.response_message else "No message"
+        logger.info(f"   [9.3] Response message snippet            : '{snippet}...'")
+        logger.info(f"   [9.4] Packaging into ChatResponse and returning HTTP 200 JSON to frontend.")
+        logger.info("=" * 80)
 
-    return ChatResponse(
-        session_id=workflow_result.session_id,
-        status=workflow_result.status,
-        data=workflow_result.data,
-        processing_time_ms=workflow_result.processing_time_ms,
-        pipeline=workflow_result.pipeline,
-    )
+        return ChatResponse(
+            session_id=workflow_result.session_id,
+            status=workflow_result.status,
+            data=workflow_result.data,
+            processing_time_ms=workflow_result.processing_time_ms,
+            pipeline=workflow_result.pipeline,
+        )
+    except Exception as wf_err:
+        logger.exception(f"Workflow execution exception: {wf_err}. Gracefully falling back to Request Handler Agent direct response.")
+        fallback_data = await request_handler_agent.process(
+            query=request.message,
+            session_id=session_id,
+            context=request.context,
+        )
+        return ChatResponse(
+            session_id=session_id,
+            status="accepted" if fallback_data.is_banking_related else "rejected",
+            data=fallback_data,
+            processing_time_ms=0.0,
+            pipeline={
+                "agent_1_request_handler": fallback_data.model_dump() if hasattr(fallback_data, "model_dump") else {},
+                "fallback_notice": f"Handled directly by Agent 1 (LLM: {request_handler_agent.provider_name})",
+            },
+        )
 
 
 @app.post("/api/v1/enrich", response_model=RequestHandlerOutput, summary="Direct Query Enrichment")
