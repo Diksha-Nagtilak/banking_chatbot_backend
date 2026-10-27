@@ -58,9 +58,9 @@ class RequestHandlerAgent:
 
     def __init__(self, client: Optional[BaseChatClient] = None) -> None:
         if client is None:
-            client, provider_name, is_mock = create_chat_client()
+            client, provider_name, _ = create_chat_client()
             self.provider_name = provider_name
-            self.is_mock = is_mock
+            self.is_mock = False
         else:
             self.provider_name = client.__class__.__name__
             self.is_mock = False
@@ -78,7 +78,7 @@ class RequestHandlerAgent:
             },
         )
         logger.info(
-            f"Initialized RequestHandlerAgent with client: {self.provider_name} (Mock Mode: {self.is_mock})"
+            f"Initialized RequestHandlerAgent with live LLM client: {self.provider_name}"
         )
 
     async def process(
@@ -95,33 +95,55 @@ class RequestHandlerAgent:
         if context:
             user_prompt += f"\nSession Context: {json.dumps(context)}"
 
+        logger.info("[FLOW: STEP 4 - AGENT 1 LLM PROCESSING] RequestHandlerAgent.process() started.")
+        logger.info(f"   [4.1] Variable 'query'        : '{query}'")
+        logger.info(f"   [4.2] Variable 'session_id'   : '{session_id}'")
+        logger.info(f"   [4.3] Variable 'user_prompt'  : '{user_prompt}'")
+
         message = Message(role="user", contents=[user_prompt])
+        logger.info("   [4.4] Calling Azure OpenAI (gpt-4.1-mini): await self.agent.run(messages=[message])...")
 
         try:
             agent_response = await self.agent.run(messages=[message])
+            logger.info(f"response from the agent: {agent_response}")
+            logger.info("   [4.5] Received raw completion from Azure OpenAI. Parsing into RequestHandlerOutput...")
+
+            result: Optional[RequestHandlerOutput] = None
 
             # Case 1: Framework parsed into structured Pydantic object
             if hasattr(agent_response, "value") and isinstance(
                 agent_response.value, RequestHandlerOutput
             ):
-                return agent_response.value
+                result = agent_response.value
 
             # Case 2: Dict returned in value
-            if hasattr(agent_response, "value") and isinstance(
+            elif hasattr(agent_response, "value") and isinstance(
                 agent_response.value, dict
             ):
-                return RequestHandlerOutput.model_validate(agent_response.value)
+                result = RequestHandlerOutput.model_validate(agent_response.value)
 
             # Case 3: Parse from response text
-            raw_text = agent_response.text if hasattr(agent_response, "text") else str(agent_response)
-            clean_text = raw_text.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
+            else:
+                raw_text = agent_response.text if hasattr(agent_response, "text") else str(agent_response)
+                clean_text = raw_text.strip()
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text[7:]
+                if clean_text.endswith("```"):
+                    clean_text = clean_text[:-3]
 
-            data = json.loads(clean_text)
-            return RequestHandlerOutput.model_validate(data)
+                data = json.loads(clean_text)
+                result = RequestHandlerOutput.model_validate(data)
+
+            logger.info("[FLOW: STEP 4.6 - AGENT 1 PARSED OUTPUT]")
+            logger.info(f"   - is_banking_related: {result.is_banking_related}")
+            logger.info(f"   - category          : {result.category}")
+            logger.info(f"   - confidence        : {result.confidence}")
+            logger.info(f"   - detected_intent   : '{result.detected_intent}'")
+            logger.info(f"   - enriched_query    : '{result.enriched_query}'")
+            snippet = result.response_message.replace(chr(10), " ")[:100] if result.response_message else ""
+            logger.info(f"   - response_message  : '{snippet}...'")
+
+            return result
 
         except Exception as e:
             logger.exception(f"Error executing RequestHandlerAgent with prompt: '{query}': {e}")
