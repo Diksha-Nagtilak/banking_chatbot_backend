@@ -260,7 +260,7 @@ async def chat_endpoint(request: ChatRequest) -> ChatResponse:
         context=request.context,
     )
 
-    logger.info("[FLOW: STEP 9 - FASTAPI GATEWAY RETURN] Workflow execution finished.")
+    logger.info("[FLOW: STEP 9 - FASTAPI GATEWAY RETURN] Workflow execution finished.....")
     logger.info(f"   [9.1] Workflow Result 'status'             : '{workflow_result.status}'")
     logger.info(f"   [9.2] Workflow Result 'processing_time_ms': {workflow_result.processing_time_ms} ms")
     snippet = workflow_result.data.response_message.replace(chr(10), " ")[:120] if workflow_result.data and workflow_result.data.response_message else "No message"
